@@ -1,0 +1,207 @@
+Resources:
+  ###########################################
+  ######## Creating Cognito Resources #######
+  ###########################################
+
+  #Step 1. Create Cognito User Pool
+  DemoCognitoUserPool:
+    Type: "AWS::Cognito::UserPool"
+    Properties:
+      # AutoVerifiedAttributes need to send verification code via email or phone
+      AutoVerifiedAttributes:
+        - email
+  # Step 2. Create Client in Cognito User Pool
+  MyAppClient:
+    Type: "AWS::Cognito::UserPoolClient"
+    Properties:
+      ClientName:  MyClient
+      UserPoolId: !Ref DemoCognitoUserPool
+      GenerateSecret: false
+
+  # Step 3. Create Cognito Identity Pool and Reference it to User Pool and the Client
+  DemoCognitoIdentityPool:
+    Type: "AWS::Cognito::IdentityPool"
+    Properties:
+      IdentityPoolName: MyDemoIdentityPool
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref MyAppClient
+          ProviderName: !GetAtt DemoCognitoUserPool.ProviderName
+
+  # Step 4. Create IAM Role to assign policies that can be Attached to Identity Pool
+  CognitoWebFederatedRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Principal:
+                Federated:
+                  - "cognito-identity.amazonaws.com"
+              Action:
+                  - "sts:AssumeRoleWithWebIdentity"
+  # Step 5. Create a policy and attached it to "Step 4" Role
+  BucketPolicies:
+      Type: "AWS::IAM::Policy"
+      Properties:
+        PolicyName: "BucketPolicy"
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: "Allow"
+              Action: "s3:*"
+              Resource: "*"
+        Roles:
+          -
+            Ref: CognitoWebFederatedRole
+
+  # Step 6. Use IdentityPoolRoleAttachment to attach Role to Identity Pool (Who ever authenticated via User Pool can Request
+  # Identity Token and get authenitcated for AWS resources as specified as Role and Policy)
+  IdentityPoolRoleAttachement:
+    Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+    Properties:
+      IdentityPoolId: !Ref DemoCognitoIdentityPool
+      Roles:
+        authenticated: !GetAtt CognitoWebFederatedRole.Arn
+
+  ###########################################
+  ########## End Cognito Resources ##########
+  ###########################################
+
+  #####################################################
+  ########## Creating  API Gateway Resources ##########
+  ####################################################
+
+  # Step 1. Create Rest Api in API Gateway
+  DemoAPI:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: "demoApi"
+      Description: Sample RestAPI for cognito demo
+  # Step 2. Create a Resource under the Rest Api
+  DemoAPIGResource:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: !Ref DemoAPI
+      ParentId:
+        Fn::GetAtt:
+          - DemoAPI
+          - RootResourceId
+      PathPart: "hello"
+
+  # Step 3. Create methods for the above resource
+  HelloMethod:
+    #This method invokes Lambda function, This Rest Api should have function invokation permission
+    #to create lamba permission there should be method available in Rest Api, so there should be
+    #DependsOn parameter reference to lambda permission
+     DependsOn:
+       - FunctionInvockationPermission
+     Type: "AWS::ApiGateway::Method"
+     Properties:
+       HttpMethod: GET
+       ResourceId:
+         !Ref DemoAPIGResource
+       RestApiId: !Ref DemoAPI
+       MethodResponses:
+         - StatusCode: 200
+       #Since we use Cognito user pool AuthorizationType should be COGNITO_USER_POOLS
+       AuthorizationType: COGNITO_USER_POOLS
+       #To use Cognito user pooll AuthorizationType methos should reference to Authorizer with
+       #cognito user pool configuration
+       AuthorizerId: !Ref CognitoAuthorizer
+       #To invoke lambda function Integration property should be configured pointing to the correct function
+       Integration:
+         Type: AWS_PROXY
+         IntegrationHttpMethod: POST
+         IntegrationResponses:
+           - StatusCode: 200
+         # !ImportValue HelloWorldLambda is coming from serverless template by exporting the resources
+         Uri: !Join ["",["arn:aws:apigateway:", !Ref "AWS::Region", ":lambda:path/2015-03-31/functions/", !ImportValue HelloWorldLambdaArn,"/invocations" ]]
+  # Step 4. Create Authorizer in Rest Api for Congito user pool
+  CognitoAuthorizer:
+    Type: "AWS::ApiGateway::Authorizer"
+    Properties:
+      Type: COGNITO_USER_POOLS
+      RestApiId: !Ref DemoAPI
+      ProviderARNs:
+        - !GetAtt DemoCognitoUserPool.Arn
+      Name: CognitoUserPoolAuthorizer
+      IdentitySource: "method.request.header.Authorization"
+
+  # Step 5. Create Lambda invokation permission fro !ImportValue HelloWorldLambda function for
+  #all end point of Rest Api DemoAPI
+  FunctionInvockationPermission:
+     Type: "AWS::Lambda::Permission"
+     Properties:
+       Action: "lambda:invokeFunction"
+       FunctionName: !ImportValue HelloWorldLambdaArn
+       Principal: "apigateway.amazonaws.com"
+       SourceArn: !Join ["",["arn:aws:execute-api:", !Ref "AWS::Region", ":",!Ref "AWS::AccountId", ":",!Ref DemoAPI, "/*"]]
+
+ # Step 6. Create a stage for Rest Api DemoAPI
+  DEV:
+     Type: "AWS::ApiGateway::Stage"
+     Properties:
+       StageName: DEV
+       Description: DEV Stage
+       RestApiId: !Ref DemoAPI
+       DeploymentId: !Ref DemoAPIDeployment
+
+  DemoOPTIONS:
+    Type: "AWS::ApiGateway::Method"
+    Properties:
+      ResourceId: !Ref DemoAPIGResource
+      RestApiId: !Ref DemoAPI
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+            StatusCode: '200'
+        PassthroughBehavior: NEVER
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: '200'
+
+  # Step 7. Create a Deployment for Rest Api
+  DemoAPIDeployment:
+    # Deployment DependsOn method so giving HelloMethod as DependsOn
+     DependsOn:
+      - HelloMethod
+     Type: "AWS::ApiGateway::Deployment"
+     Properties:
+      RestApiId: !Ref DemoAPI
+      StageName: Prod
+
+  #####################################################
+  ############ End  API Gateway Resources ############
+  ####################################################
+
+# Outputting some references
+Outputs:
+  DemoCognitoUserPool:
+    Description: Reference to the cognito UserPool
+    Value: !Ref DemoCognitoUserPool
+    Export:
+      Name: DemoCognitoUserPool
+  HelloAPIGetMethod:
+    Description: Hello GET API method
+    Value: !Ref HelloMethod
+    Export:
+      Name: HelloGetAPI
