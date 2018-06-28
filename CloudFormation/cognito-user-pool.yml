@@ -150,6 +150,7 @@ Resources:
        RestApiId: !Ref DemoAPI
        DeploymentId: !Ref DemoAPIDeployment
 
+  #Step 6. to Enable CORS need to create this OPTIONS method with CORS enablers
   DemoOPTIONS:
     Type: "AWS::ApiGateway::Method"
     Properties:

@@ -29,7 +29,7 @@ functions:
 resources:
   Outputs:
      ThisFunction:
-       Description: "Description for the output"
+       Description: "Hello Lambda function Arn"
        Value:
           "Fn::GetAtt": [HelloLambdaFunction, Arn]
        Export:

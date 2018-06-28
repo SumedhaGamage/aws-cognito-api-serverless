@@ -11,17 +11,15 @@ export class ApiService {
     private auth: AuthService) { }
 
   apis = {
-    getHelloWorld: " https://hv5r40mveh.execute-api.us-east-1.amazonaws.com/Prod/hello"
+    getHelloWorldApiUrl: "https://xxxx.execute-api.us-east-1.amazonaws.com/xxx/xxx" //Your api
   };
   getHelloWorld() {
-    console.log('in api serive');
-    console.log(this.auth.getAccessToken());
     const httOptions = {
       headers: new HttpHeaders(
         { "Authorization": this.auth.getAccessToken() }
       )
     };
-    return this.http.get(this.apis.getHelloWorld, httOptions);
+    return this.http.get(this.apis.getHelloWorldApiUrl, httOptions);
   }
 
 }
